@@ -8,38 +8,58 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(dplyr, tidyr, here, ggplot2, RColorBrewer, rpart, rpart.plot)
+pacman::p_load(dplyr, tidyr, here, ggplot2, RColorBrewer, rpart, rpart.plot, stringr, caret)
 theme_set(theme_bw())
 options(scipen = 999)
+
+#https://www.r-bloggers.com/2019/07/clean-consistent-column-names/
+clean_names <- function(.data, unique = FALSE) {
+  n <- if (is.data.frame(.data)) colnames(.data) else .data
+  n <- gsub("%+", "_pct_", n)
+  n <- gsub("\\$+", "_dollars_", n)
+  n <- gsub("\\++", "_plus_", n)
+  n <- gsub("-+", "_minus_", n)
+  n <- gsub("\\*+", "_star_", n)
+  n <- gsub("#+", "_cnt_", n)
+  n <- gsub("&+", "_and_", n)
+  n <- gsub("@+", "_at_", n)
+  n <- gsub("[^a-zA-Z0-9_]+", "_", n)
+  n <- gsub("([A-Z][a-z])", "_\\1", n)
+  n <- tolower(trimws(n))
+  
+  n <- gsub("(^_+|_+$)", "", n)
+  
+  n <- gsub("_+", "_", n)
+  
+  if (unique) n <- make.unique(n, sep = "_")
+  
+  if (is.data.frame(.data)) {
+    colnames(.data) <- n
+    .data
+  } else {
+    n
+  }
+}
 ```
 
 ```{r data processing}
-data <- read.table(here("anage_data.txt"), sep = '\t', header=TRUE, quote = "\"")
+data <- read.table(here("anage_data.txt"), sep = '\t', header=TRUE, quote = "\"") %>%
+  clean_names()
 
 str(data)
 
-#Replace periods with underscores in field names
-names(data) <- gsub(".", "_", names(data), fixed = T)
-
-summary(data$Maximum_longevity__yrs_)
-summary(data$Class)
-
-#View the animal with the highest longevity
-data %>% 
-  filter(Maximum_longevity__yrs_ == max(Maximum_longevity__yrs_))
-
-#Removing observations without a maximum longevity
-data <- data %>%
-  drop_na(Maximum_longevity__yrs_)
-
 #Only working with mammals
 data <- data %>%
-  filter(Class == "Mammalia")
+  filter(class == "Mammalia")
 
 data <- data %>%
-  mutate(Adult_weight__kg_ = Adult_weight__g_ / 1000 )
+  mutate(adult_weight_kg = adult_weight_g / 1000 )
 
-data$Order <- factor(data$Order)
+data$order <- factor(data$order)
+
+usedVars <- data %>% select(order, maximum_longevity_yrs, adult_weight_kg, gestation_incubation_days, female_maturity_days, male_maturity_days)
+head(usedVars)
+
 
 #Split into train and test
 index <- sample(1:nrow(data),size = ceiling(0.8*nrow(data)),replace = FALSE)
@@ -47,16 +67,53 @@ train <- data[index,]
 test <- data[-index,]
 ```
 
+```{r classification tree}
+#Creating the tree
+orderTree <- rpart(order ~ maximum_longevity_yrs + adult_weight_kg + gestation_incubation_days + female_maturity_days + male_maturity_days , train, method = "class")
 
-```{r tree}
-tree1 <- rpart(Maximum_longevity__yrs_ ~ Adult_weight__kg_ + Gestation_Incubation__days_ + Female_maturity__days_ + Male_maturity__days_ , train, method = "anova", parms = list(split = 'gini'))
+#Labeling order terms to be readily understandable
+node.fun <- function(x, labs, digits, varlen)
+{
+    
+    labs   <- sub("Chiroptera", "Bats", labs)
+    labs   <- sub("Rodentia", "Rodents", labs)
+    labs   <- sub("Carnivora", "Carnivorans", labs)
+    labs   <- sub("Diprotodontia", "Marsupials", labs)
+    #labs   <- sub("Artiodactyla", "Even-toed Ungulates", labs)
+    #labs   <- sub("Cetacea", "Aquatic Mammals", labs)
+    #labs   <- sub("Perissodactyla", "Odd-toed Ungulates", labs)
+    labs
+}
 
-rpart.plot(tree1, extra = 101, branch = .5, box.palette = "RdYlGn", prefix = "Longevity_yr\n", fallen.leaves = F, tweak = 1.3)
+#Plotting the tree
+rpart.plot(orderTree, extra = 102, branch = .8, fallen.leaves = F, 
+           tweak = 1.45, legend.x = NA, type = 5, clip.facs = T, 
+           box.palette = "RdYlGn", 
+           ygap = .9, node.fun = node.fun)
 
-printcp(tree1)
-plotcp(tree1)
+#complexity parameter
+plotcp(orderTree)
+printcp(orderTree)
+
+#metrics on training set
+trainPred <- predict(object = orderTree, newdata = train, type = "class")
+cmTrain <- table(train$order, trainPred)
+confusionMatrix(cmTrain)
+
+#metrics on test set
+testPred <- predict(object = orderTree, newdata = test, type = "class")
+cmTest <- table(test$order, testPred)
+confusionMatrix(cmTest)
+
+```
 
 
-
+```{r regression tree}
+# ageTree <- rpart(maximum_longevity_yrs ~ adult_weight_kg + gestation_incubation_days + female_maturity_days + male_maturity_days , train, method = "anova")
+# 
+# rpart.plot(ageTree, extra = 100, branch = .5, box.palette = "RdYlGn", prefix = "Longevity_yr\n", fallen.leaves = F, tweak = 1.3, type = 3)
+# 
+# printcp(ageTree)
+# plotcp(ageTree)
 ```
 
